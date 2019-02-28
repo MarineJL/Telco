@@ -1,0 +1,547 @@
+---
+title: "Project - Telco Customer Churn"
+output: html_notebook
+---
+
+<!-- Sub heading -->
+This notebook is a project for courses 'R for Data Science' and 'Machine Learning'
+
+<!-- Team Members -->
+####<span style="color:maroon">Team</span>
+
+* *DEVOS Pierre-Yvan*
+* *JACQUEMIN-LORRIAUX Marine*
+* *LEGENDRE Benoit*
+* *SHAH Ashay*
+
+***
+<!-- Adding Data Description -->
+####<span style="color:maroon">Data Description </span> 
+
+* We have chosen the dataset - [Telco Customer Churn](https://www.kaggle.com/blastchar/telco-customer-churn) from Kaggle
+* It is a data snapshot of the customers of a telecom company which provides phone and internet service
+* Each row represents a customer, each column contains customer's attributes described below. 
+* The **Churn** column is our target - Customers who stopped using the services
+* The raw data contains **7043 rows (customers)** and **21 columns (features)**
+* Data contains - 
+    + Services that each customer has signed up for-> phone, multiple lines, internet, online security, online backup, device protection, tech support, and streaming TV and movies
+    + Customer account information-> how long they've been a customer, contract, payment method, paperless billing, monthly charges, and total charges
+    + Demographic info about customers-> gender, age range, and if they have partners and dependents
+
+Our business problem is to fight against customer churn. Our company wants to predict which customers are more likely to churn so that we can take the necessary actions to retain them. 
+
+<!-- Explaining the 21 columns -->
+
+####<span style="color:maroon">Columns Description</span>
+
+* **customerID** - Customer ID
+* **gender** - gender (male, female)
+* **SeniorCitizen** - Whether the customer is a senior citizen or not (1, 0)
+* **Partner** - Whether the customer has a partner- spouse/girlfriend/etc (Yes, No)
+* **Dependents** - Whether the customer has dependents or not (Yes, No)
+* **tenure** - Number of months the customer has stayed with the company
+* **PhoneService** - Whether the customer has a phone service or not (Yes, No)
+* **MultipleLines** - Whether the customer has multiple lines or not (Yes, No, No phone service)
+* **InternetService** - Customer's internet service provider (DSL, Fiber optic, No)
+* **OnlineSecurity** - Whether the customer has online security or not (Yes, No, No internet service)
+* **OnlineBackup** - Whether the customer has online backup or not (Yes, No, No internet service)
+* **DeviceProtection** - Whether the customer has device protection or not (Yes, No, No internet service)
+* **TechSupport** - Whether the customer has tech support or not (Yes, No, No internet service)
+* **StreamingTV** - Whether the customer has streaming TV or not (Yes, No, No internet service)
+* **StreamingMovies** - Whether the customer has streaming movies or not (Yes, No, No internet service)
+* **Contract** - The contract term of the customer (Month-to-month, One year, Two year)
+* **PaperlessBilling** - Whether the customer has paperless billing or not (Yes, No)
+* **PaymentMethod** - The customer's payment method (Electronic check, Mailed check, Bank transfer (automatic), Credit card (automatic))
+* **MonthlyCharges** - The amount charged to the customer monthly
+* **TotalCharges** - The total amount charged to the customer
+* **Churn** - Whether the customer churned or not (Yes or No)
+
+####<span style="color:maroon">Okay then, let's start ...</span>
+
+Calling the required libraries...
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(caret)
+library(mlbench)
+library(glmnet)
+library(class)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(forcats)
+library(plotROC)
+```
+
+####<span style="color:maroon">Loading and Checking the data</span>
+<!-- Loading the data and Basic checks -->
+```{r}
+data_input <- read.csv("WA_Fn-UseC_-Telco-Customer-Churn.csv",header = TRUE)
+head(data_input)
+```
+
+```{r echo=FALSE}
+print(paste("Number of rows :", nrow(data_input), "|", "Number of Columns :", ncol(data_input),sep = "  "))
+```
+
+
+Let's do some basic checks for consistency and null values
+<!-- Basic Checks -->
+```{r}
+#str(data_input)
+summary(data_input)
+```
+
+* Everything seems to be a factor except *'Senior Citizen'*. We will change from {0,1} to {Yes, No} to keep it consistent with the other factor variables.  
+* There are 11 NULLS in *'TotalCharges'* but this is because the Tenure is 0 months. For now, let's remove these 11 customers since they haven't completed 1 month yet (all 11 customers have Churn == "No")
+* There are features like *'Online Security = {Yes, No, No Internet Service}'*. For simplicity we replace *'No Internet Service'* by *'No'*
+
+<!-- Basic cleaning -->
+```{r}
+data_telco <- mutate(data_input, SeniorCitizen = as.factor(ifelse(SeniorCitizen == 1, "Yes","No"))) 
+data_telco <- filter(data_telco, tenure != 0)
+data_telco <- mutate(data_telco,
+                     MultipleLines = recode(MultipleLines,"No phone service"="No"),
+                     OnlineSecurity = recode(OnlineSecurity,"No internet service"="No"),
+                     OnlineBackup = recode(OnlineBackup,"No internet service"="No"),
+                     DeviceProtection = recode(DeviceProtection,"No internet service"="No"),
+                     TechSupport = recode(TechSupport,"No internet service"="No"),
+                     StreamingTV = recode(StreamingTV,"No internet service"="No"),
+                     StreamingMovies = recode(StreamingMovies,"No internet service"="No"))
+```
+
+
+```{r echo=FALSE}
+print(paste("Number of rows :", nrow(data_telco), "|", "Number of Columns :", ncol(data_telco),sep = "  "))
+```
+
+
+Okay, so we have done the initial checks and cleaning and we have the data to work with. Let's start by some basic description
+
+<!-- Basic summary/description -->
+```{r}
+churntable <- data_telco %>% count(Churn) %>% mutate(perc = prop.table(n))
+churnperc <- as.double(churntable[churntable$Churn == "Yes","perc"])
+churntable
+```
+Of the 7032 customers, we have **26% Churn** which is quiet high for a telco company.  Also the data is slightly imbalanced. We need to remember this while building the models later.
+
+
+<!-- Let's start with Visualization -->
+####<span style="color:maroon">Let's start exploring using visualization</span>
+
+*Please note that we are showing only the relevant graphs in this notebook. Also, the codes for graphs are hidden for the simplicity of the notebook. Please refer to the .Rmd file for code*
+
+<!-- Senior Citizen v/s Churn Pie Chart-->
+```{r, echo=FALSE}
+cols <- c("Yes" = "#F8766D", "No" = "lightgreen")
+
+temp <- data_telco %>% group_by(SeniorCitizen) %>% count(SeniorCitizen, Churn) %>%  mutate(perc = prop.table(n)) 
+
+ggplot(temp, aes(x="", y=perc, fill=Churn))+
+  geom_bar(width = 1, stat = "identity")+
+  coord_polar("y") +
+  facet_grid(~SeniorCitizen) +
+  labs(x=NULL, y = NULL, title = "Senior Citizen") +
+  theme(axis.text.x=element_blank()) +
+  geom_text(aes(label = paste0(round(perc*100), "%")), 
+              position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = cols) +
+  theme_classic() + 
+  theme(axis.line = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          plot.title = element_text(hjust = 0.5, color = "#666666"))
+```
+We see that Senior Citizens tend to churn more than the Younger ones.
+
+
+<!-- Partner v/s Churn Pie Chart-->
+```{r, echo=FALSE}
+temp <- data_telco %>% group_by(Partner) %>% count(Partner, Churn) %>%  mutate(perc = prop.table(n)) 
+
+ggplot(temp, aes(x="", y=perc, fill=Churn))+
+  geom_bar(width = 1, stat = "identity")+
+  coord_polar("y") +
+  facet_grid(~Partner) +
+  labs(x=NULL, y = NULL, title = "Partner") +
+  theme(axis.text.x=element_blank()) +
+  geom_text(aes(label = paste0(round(perc*100), "%")), 
+              position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = cols) +
+  theme_classic() + 
+  theme(axis.line = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          plot.title = element_text(hjust = 0.5, color = "#666666"))
+```
+Customers with 'No Partners' tend to Churn more. But we can't do anything about that as a company. So it is a question if we should keep 'Partners' variable in our models.
+
+
+<!-- Payment Method v/s Churn Stacked bar Chart-->
+```{r, echo=FALSE}
+temp <- data_telco %>% group_by(PaymentMethod) %>% count(PaymentMethod, Churn) %>%  mutate(percent = prop.table(n))
+
+ggplot(temp, aes(x = PaymentMethod, y = percent, fill=Churn)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_text(aes(label = paste0(round(percent*100), "%")), 
+              position = position_stack(vjust = 0.5)) +
+  geom_hline(yintercept = churnperc, linetype = "dashed") +
+  scale_fill_manual(values = cols) +
+  labs(title="Payment Method")
+```
+We see that customers who make 'electronic check' payment tend to churn more than others
+
+
+<!-- Contract Type v/s Churn Stacked bar Chart-->
+```{r, echo=FALSE}
+temp <- data_telco %>% group_by(Contract) %>% count(Contract, Churn) %>%  mutate(percent = prop.table(n))
+
+ggplot(temp, aes(x = Contract, y = percent, fill=Churn)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_text(aes(label = paste0(round(percent*100), "%")), 
+              position = position_stack(vjust = 0.5)) +
+  geom_hline(yintercept = churnperc, linetype = "dashed") +
+  scale_fill_manual(values = cols) +
+  labs(title="Contract Type")
+  
+```
+Customers with 'month-to-month' type of subscription have hgher chances of Churn
+
+<!-- Paperless Billing v/s Churn Stacked bar Chart-->
+```{r, echo=FALSE}
+temp <- data_telco %>% group_by(PaperlessBilling) %>% count(PaperlessBilling, Churn) %>%  mutate(percent = prop.table(n))
+
+ggplot(temp, aes(x = PaperlessBilling, y = percent, fill=Churn)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_text(aes(label = paste0(round(percent*100), "%")), 
+              position = position_stack(vjust = 0.5)) +
+  geom_hline(yintercept = churnperc, linetype = "dashed") +
+  scale_fill_manual(values = cols) +
+  labs(title="Paperless Billing")
+  
+```
+Customers with Paperless Billing tend to churn more than others
+
+
+
+<!-- Internet Service v/s Churn Stacked bar Chart-->
+```{r, echo=FALSE}
+temp <- data_telco %>% group_by(InternetService) %>% count(InternetService, Churn) %>%  mutate(percent = prop.table(n))
+
+ggplot(temp, aes(x = InternetService, y = percent, fill=Churn)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_text(aes(label = paste0(round(percent*100), "%")), 
+              position = position_stack(vjust = 0.5)) +
+  geom_hline(yintercept = churnperc, linetype = "dashed") +
+  scale_fill_manual(values = cols) +
+  labs(title="Internet Service")
+```
+We see that customers with 'Fiber optic' Internet Service tend to churn more than others
+
+
+<!-- Online Security v/s Churn Stacked bar Chart-->
+```{r, echo=FALSE}
+temp <- data_telco %>% group_by(OnlineSecurity) %>% count(OnlineSecurity, Churn) %>%  mutate(percent = prop.table(n))
+
+ggplot(temp, aes(x = OnlineSecurity, y = percent, fill=Churn)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_text(aes(label = paste0(round(percent*100), "%")), 
+              position = position_stack(vjust = 0.5)) +
+  geom_hline(yintercept = churnperc, linetype = "dashed") +
+  scale_fill_manual(values = cols)+
+  labs(title="Online Security")
+  
+```
+We see that customers with NO Online Security tend to churn more than others
+
+
+
+<!-- TechSupport v/s Churn Stacked bar Chart-->
+```{r, echo=FALSE}
+temp <- data_telco %>% group_by(TechSupport) %>% count(TechSupport, Churn) %>%  mutate(percent = prop.table(n))
+
+ggplot(temp, aes(x = TechSupport, y = percent, fill=Churn)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_text(aes(label = paste0(round(percent*100), "%")), 
+              position = position_stack(vjust = 0.5)) +
+  geom_hline(yintercept = churnperc, linetype = "dashed") +
+  scale_fill_manual(values = cols)+
+  labs(title="Tech Support")
+  
+```
+We see that customers with NO TechSupport tend to churn more than others
+
+
+
+<!-- Distribution of MonthlyCharge for Churn and remaining Customers-->
+```{r, echo=FALSE}
+ggplot(data_telco) + aes(x=MonthlyCharges, fill=Churn) + geom_density(alpha=0.8) +
+  scale_fill_manual(values = cols) + labs(title="Distribution of MonthlyCharges")
+```
+Customer who churn are more likely to have a higher monthly charges
+
+
+
+```{r, echo=FALSE}
+ggplot(data_telco) + aes(x=tenure, fill=Churn) + geom_density(alpha=0.8) +
+  scale_fill_manual(values = cols) + labs(title="Distribution of Tenure")
+```
+
+We can clearly see that customers who churn the most are new customers, they have a lower tenure. We can also check the same with a graph of tenure vs % of Churn
+
+<!-- % Churn over tenure  -->
+```{r, echo=FALSE}
+temp <- data_telco %>% group_by(tenure) %>% count(Churn) %>% mutate(percent=prop.table(n)) %>% filter(Churn=="Yes")
+
+ggplot(temp) + aes(x=tenure, y=percent) + geom_line(col="#F8766D", size=2) +
+  labs(title="% Churn by tenure") + ylim(0,0.8)
+```
+As we see, as tenure increases, the chances of Customer Churn decreases
+
+
+####<span style="color:maroon">So what have we learnt so far ?</span>
+These points should reflect in the various machine learning models we try...
+
+* On an average ~26% is the Churn - very high
+* Churn is higher if :
+    + Monthly Charges are high
+    + New customers (less tenure)
+    + Customer is senior citizen - 42% vs 24%
+    + Customer doesn't have a partner - 33% vs 20%
+    + Payment method is 'electronic check' - 45% vs ~17% for others
+    + Customers with 'month-to-month' type of subscription vs '1year' or '2year' - 43% vs 11% vs 3%
+    + Customers with PaperLess Billing - 34% vs 16%
+    + Internet Service is 'Fiber Optics' - 42% vs 19%
+    + No Online Security - 31% vs 15%
+    + No Tech Support - 31% vs 15%
+  
+
+
+####<span style="color:maroon">Let's try modeling different algorithms and see which performs best on this data</span>
+
+***But first things first***  
+
+* This is a classification problem
+* We split train-test 75%-25%
+* What is our performance criteria ?
+    + Since we have imbalanced data, accuracy is not a good measure. Given 'No' is the default in a table, Specificity is a relevant metric since we would love to predict all customers who actually 'Churn'. But since our goal is to validate different models, let's also measure ROC  
+
+**Data preparation**
+```{r}
+data_telco <- data_telco %>% select(-customerID) #Remove the Customer ID column
+set.seed(1111)
+train.index <- sample(nrow(data_telco), nrow(data_telco)*0.75)
+train <- data_telco[train.index,]
+test <- data_telco[-train.index,]
+train.X <- model.matrix(Churn~.,data=train)
+test.X <- model.matrix(Churn~.,data=test)
+```
+
+
+
+#### 1. Logistic Regression 
+We will fit a logistic regression on the data_telco.train data set. The logistic model is defined by $$\log\frac{p(x)}{1-p(x)}=\beta_0+\beta_1x_1+...+\beta_{20}x_{20}$$
+
+
+where $$p(x)=P(Y=1 \mid X=x) $$ Unknown parameters $$\beta_1,...,\beta20 $$  are estimated by maximum likelihood. We fit the model
+
+Since we have a binary Churn variable, we start with a logistic regression model. We try to predict the churn probability by fitting all the right explanatory variables on Churn. 
+
+
+```{r}
+model.logistic <- glm(Churn~., data=train, family="binomial")
+pred.logistic <- predict(model.logistic, newdata=test, type = "response")
+summary(model.logistic)
+```
+By checking the p value we can see that all variables are not statiscally significant to explain Churn. 
+
+
+#### 2. Stepwise Logistic Regression
+
+Since we have a lot of variables we want to check which ones are the most significant ones. 
+
+We propose to make a variable selection procedure with a backward selection approach using BIC criterion 
+
+
+```{r}
+#select model which optimizes BIC criteria
+model.backward <- step(model.logistic,direction="backward",k=log(nrow(train)),trace=0)
+pred.backward <- predict(model.backward, newdata=test, type="response")
+summary(model.backward)
+```
+Here the model selected automatically the best subset with all statiscally significant variable.
+
+
+#### 3. Penalised Regression
+
+We will try to get rid of unnecessary variables by imposing a constrain on the size of the coefficient. With Lasso we can drop some variables and with ridge we can shrink the coefficient. Both methods will help to reduce the variance. 
+
+```{r}
+#Draw the coefficient paths for ridge and lasso.
+model.ridge <- glmnet(train.X,train$Churn,family="binomial",alpha=0)
+model.lasso <- glmnet(train.X,train$Churn,family="binomial",alpha=1)
+plot(model.ridge,main="Ridge")
+plot(model.lasso,main="Lasso")
+```
+So we see that that the coefficients shrink for RIDGE and some of them become 0 for LASSO. Let's get the best shrinkage parameter for both
+
+```{r}
+#Select the shrinkage parameter
+model.lassoCV <- cv.glmnet(train.X,train$Churn,family="binomial",alpha=1)
+plot(model.lassoCV,main="Lasso")
+
+model.ridgeCV <- cv.glmnet(train.X,train$Churn,family="binomial",alpha=0)
+plot(model.ridgeCV,main="Ridge")
+```
+For Ridge, the selected parameter corresponds to the minimum value of the grid. Let's try to change the grid.
+
+```{r}
+model.ridgeCV <- cv.glmnet(train.X,train$Churn,family="binomial",alpha=0,
+                           lambda=exp(seq(-12,2,length=140)))
+plot(model.ridgeCV,main="Ridge")
+```
+
+
+```{r, echo=FALSE}
+paste("Selected Lamba are",round(model.lassoCV$lambda.min,10),"for Lasso and",round(model.ridgeCV$lambda.min,10),"for Ridge")
+```
+
+```{r}
+pred.lasso <- predict(model.lassoCV, newx=test.X, s="lambda.min", type="response")
+pred.ridge <- predict(model.ridgeCV, newx=test.X, s="lambda.min", type="response")
+```
+
+
+
+#### 4. KNN Classification 
+
+With knn we try to find a classification method which will predict customer churn by measuring the similarity with those customers who have already Churned  
+
+We will do ERM to find the optimal 'k' by doing a grid search with k-fold cross validation. Since our data is imbalanced, accuracy is not the most reliable metric. Hence, we will choose 'k' based on ROC
+
+```{r}
+ctrl1 <- trainControl(method="cv",number=10, classProbs = TRUE, summary = twoClassSummary)
+grid.k <- data.frame(k=seq(1,100,by=5))
+select.k <- train(Churn~.,data=train,method="knn",trControl=ctrl1,tuneGrid=grid.k,
+                  metric="ROC")
+select.k
+plot(select.k)
+```
+
+
+We will take 21 k because it has the highest accuracy. If we increase the k, accuracy will decrease because of high bias
+
+
+Now that we have the optimal k, let's use it for knn-classification
+```{r}
+pred.knn <- knn(train.X, test.X, cl=train$Churn, k = select.k$bestTune, prob=TRUE)
+```
+
+
+#### 5. Trees
+
+With trees we build many rules based on the split of the variables. 
+The trees will help us in identifying the important variables to find the best split that minimise impurity 
+
+```{r}
+model.tree <- rpart(Churn~., data=train, cp=0.00001)
+printcp(model.tree)
+```
+
+```{r}
+prune.tree <- prune(model.tree, cp = model.tree$cptable[which.min(model.tree$cptable[,"xerror"]),"CP"])
+pred.prune <- predict(prune.tree, newdata=test)[,"Yes"]
+
+rpart.plot(prune.tree)
+```
+We can see that all important variables that we saw in the visualisation part are all used to split and construct the tree. 
+
+
+#### 6. RandomForest
+
+
+With Random Forest, we try to build many trees to predict the Churn (by taking majority). This method helps in reducing the overfit and is very robust since it uses bagging qpproach.
+
+```{r}
+model.randomf <- randomForest(Churn~., data=train)
+model.randomf
+```
+Let's try to check the optimal *'mtry'* value.
+```{r}
+set.seed(1111)
+ctrl2 <- trainControl(method="oob")
+select.mtry <- train(Churn~.,data=train,method="rf",trControl=ctrl2,
+tuneGrid=data.frame(mtry=seq(1,6,by=1)))
+model.randomf <- randomForest(Churn~., data=train, mtry=as.double(select.mtry$bestTune))
+model.randomf
+```
+
+Random is building 500 trees and at each split it's using 3 random variables. 
+The estimate of error rate is 19.72%
+
+
+```{r}
+pred.randomf <- predict(model.randomf, newdata=test, type="prob")[,"Yes"]
+```
+
+
+
+
+####<span style="color:maroon">Compare different models</span>
+
+```{r}
+class.logistic <- pred.logistic %>% round() %>% as.factor() %>% fct_recode(No="0",Yes="1")
+class.backward <- pred.backward %>% round() %>% as.factor() %>% fct_recode(No="0",Yes="1")
+class.knn <- pred.knn
+class.lasso <- pred.lasso %>% round() %>% as.factor() %>% fct_recode(No="0",Yes="1")
+class.ridge <- pred.ridge %>% round() %>% as.factor() %>% fct_recode(No="0",Yes="1")
+class.prune <- pred.prune %>% round() %>% as.factor() %>% fct_recode(No="0",Yes="1")
+class.randomF <- pred.randomf %>% round() %>% as.factor() %>% fct_recode(No="0",Yes="1")
+
+#contains final class prediction
+class_data <- data.frame(logistic=class.logistic,backward=class.backward,knn=class.knn,lasso=class.lasso, ridge=class.ridge, tree=class.prune, randomForest=class.randomF,Y=test$Churn)
+
+#contains probabilities
+pred_data <- data.frame(logistic=pred.logistic,backward=pred.backward, knn=attributes(pred.knn)$prob,lasso=as.vector(pred.lasso), ridge=as.vector(pred.ridge), tree=pred.prune, randomForest=pred.randomf,Y=test$Churn)
+```
+
+Let's calculate the accuracy 
+```{r, warning=FALSE}
+class_data1 <- class_data %>% gather(key="Method",value="class",-Y)
+class_data2 <- class_data1 %>% group_by(Method) %>% summarize(accuracy=mean(class==Y)) %>% arrange(desc(accuracy))
+class_data2
+```
+
+Let's compare the models with Specificity
+```{r}
+spec_data1 <- class_data1 %>% group_by(Method) %>% summarize(specificity=specificity(table(class, Y))) %>% arrange(desc(specificity))
+spec_data1
+```
+
+
+
+
+Let's compare the models with ROC and AUC methods
+```{r}
+pred_data1 <- pred_data %>% gather(key="Method",value="score",-Y)
+pred_data2 <- pred_data1 %>% group_by(Method) %>% summarize(AUC=pROC::auc(Y,score)) %>% arrange(desc(AUC))
+pred_data2
+```
+
+```{r, warning=FALSE}
+ggplot(pred_data1)+aes(d=Y,m=score,color=Method)+geom_roc()+theme_classic()
+```
+
+***Final comparison table***
+```{r}
+full_join(pred_data2, class_data2,by="Method") %>% left_join(., spec_data1, by="Method") %>% arrange(desc(AUC))
+```
+Thanks to our results we see that the most of the models perform equally (except knn). Lasso logistic gives us the best AUC whereas logistic gives us the best accuracy and specificity
